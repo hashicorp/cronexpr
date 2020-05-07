@@ -15,8 +15,12 @@ package cronexpr
 /******************************************************************************/
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 /******************************************************************************/
@@ -278,6 +282,493 @@ func TestNextN_every5min(t *testing.T) {
 		if nextStr != expected[i] {
 			t.Errorf(`MustParse("*/5 * * * *").NextN("2013-09-02 08:44:30", 5):\n"`)
 			t.Errorf(`  result[%d]: expected "%s" but got "%s"`, i, expected[i], nextStr)
+		}
+	}
+}
+
+func TestPeriodicConfig_DSTChange_Transitions(t *testing.T) {
+	locName := "America/Los_Angeles"
+	loc, err := time.LoadLocation(locName)
+	require.NoError(t, err)
+
+	cases := []struct {
+		name     string
+		pattern  string
+		initTime time.Time
+		expected []time.Time
+	}{
+		{
+			"normal time",
+			"0 2 * * * 2019",
+			time.Date(2019, time.February, 7, 1, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.February, 7, 2, 0, 0, 0, loc),
+				time.Date(2019, time.February, 8, 2, 0, 0, 0, loc),
+				time.Date(2019, time.February, 9, 2, 0, 0, 0, loc),
+			},
+		},
+		{
+			"Spring forward but not in switch time",
+			"0 4 * * * 2019",
+			time.Date(2019, time.March, 9, 1, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.March, 9, 4, 0, 0, 0, loc),
+				time.Date(2019, time.March, 10, 4, 0, 0, 0, loc),
+				time.Date(2019, time.March, 11, 4, 0, 0, 0, loc),
+			},
+		},
+		{
+			"Spring forward at a skipped time odd",
+			"2 2 * * * 2019",
+			time.Date(2019, time.March, 9, 1, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.March, 9, 2, 2, 0, 0, loc),
+				// no time in March 10!
+				time.Date(2019, time.March, 11, 2, 2, 0, 0, loc),
+				time.Date(2019, time.March, 12, 2, 2, 0, 0, loc),
+			},
+		},
+		{
+			"Spring forward at a skipped time",
+			"1 2 * * * 2019",
+			time.Date(2019, time.March, 9, 1, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.March, 9, 2, 1, 0, 0, loc),
+				// no time in March 8!
+				time.Date(2019, time.March, 11, 2, 1, 0, 0, loc),
+				time.Date(2019, time.March, 12, 2, 1, 0, 0, loc),
+			},
+		},
+		{
+			"Spring forward at a skipped time boundary",
+			"0 2 * * * 2019",
+			time.Date(2019, time.March, 9, 1, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.March, 9, 2, 0, 0, 0, loc),
+				// no time in March 8!
+				time.Date(2019, time.March, 11, 2, 0, 0, 0, loc),
+				time.Date(2019, time.March, 12, 2, 0, 0, 0, loc),
+			},
+		},
+		{
+			"Spring forward at a boundary of repeating time",
+			"0 1 * * * 2019",
+			time.Date(2019, time.March, 9, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.March, 9, 1, 0, 0, 0, loc),
+				time.Date(2019, time.March, 10, 0, 0, 0, 0, loc).Add(1 * time.Hour),
+				time.Date(2019, time.March, 11, 1, 0, 0, 0, loc),
+				time.Date(2019, time.March, 12, 1, 0, 0, 0, loc),
+			},
+		},
+		{
+			"Fall back: before transition",
+			"30 0 * * * 2019",
+			time.Date(2019, time.November, 3, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.November, 3, 0, 30, 0, 0, loc),
+				time.Date(2019, time.November, 4, 0, 30, 0, 0, loc),
+				time.Date(2019, time.November, 5, 0, 30, 0, 0, loc),
+				time.Date(2019, time.November, 6, 0, 30, 0, 0, loc),
+			},
+		},
+		{
+			"Fall back: after transition",
+			"30 3 * * * 2019",
+			time.Date(2019, time.November, 3, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.November, 3, 3, 30, 0, 0, loc),
+				time.Date(2019, time.November, 4, 3, 30, 0, 0, loc),
+				time.Date(2019, time.November, 5, 3, 30, 0, 0, loc),
+				time.Date(2019, time.November, 6, 3, 30, 0, 0, loc),
+			},
+		},
+		{
+			"Fall back: after transition starting in repeated span before",
+			"30 3 * * * 2019",
+			time.Date(2019, time.November, 3, 0, 10, 0, 0, loc).Add(1 * time.Hour),
+			[]time.Time{
+				time.Date(2019, time.November, 3, 3, 30, 0, 0, loc),
+				time.Date(2019, time.November, 4, 3, 30, 0, 0, loc),
+				time.Date(2019, time.November, 5, 3, 30, 0, 0, loc),
+				time.Date(2019, time.November, 6, 3, 30, 0, 0, loc),
+			},
+		},
+		{
+			"Fall back: after transition starting in repeated span after",
+			"30 3 * * * 2019",
+			time.Date(2019, time.November, 3, 0, 10, 0, 0, loc).Add(2 * time.Hour),
+			[]time.Time{
+				time.Date(2019, time.November, 3, 3, 30, 0, 0, loc),
+				time.Date(2019, time.November, 4, 3, 30, 0, 0, loc),
+				time.Date(2019, time.November, 5, 3, 30, 0, 0, loc),
+				time.Date(2019, time.November, 6, 3, 30, 0, 0, loc),
+			},
+		},
+		{
+			"Fall back: in repeated region",
+			"30 1 * * * 2019",
+			time.Date(2019, time.November, 3, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.November, 3, 0, 30, 0, 0, loc).Add(1 * time.Hour),
+				time.Date(2019, time.November, 3, 0, 30, 0, 0, loc).Add(2 * time.Hour),
+				time.Date(2019, time.November, 4, 1, 30, 0, 0, loc),
+				time.Date(2019, time.November, 5, 1, 30, 0, 0, loc),
+				time.Date(2019, time.November, 6, 1, 30, 0, 0, loc),
+			},
+		},
+		{
+			"Fall back: in repeated region boundary",
+			"0 1 * * * 2019",
+			time.Date(2019, time.November, 3, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.November, 3, 0, 0, 0, 0, loc).Add(1 * time.Hour),
+				time.Date(2019, time.November, 3, 0, 0, 0, 0, loc).Add(2 * time.Hour),
+				time.Date(2019, time.November, 4, 1, 0, 0, 0, loc),
+				time.Date(2019, time.November, 5, 1, 0, 0, 0, loc),
+				time.Date(2019, time.November, 6, 1, 0, 0, 0, loc),
+			},
+		},
+		{
+			"Fall back: in repeated region boundary 2",
+			"0 2 * * * 2019",
+			time.Date(2019, time.November, 3, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.November, 3, 0, 0, 0, 0, loc).Add(3 * time.Hour),
+				time.Date(2019, time.November, 4, 2, 0, 0, 0, loc),
+				time.Date(2019, time.November, 5, 2, 0, 0, 0, loc),
+				time.Date(2019, time.November, 6, 2, 0, 0, 0, loc),
+			},
+		},
+		{
+			"Fall back: in repeated region, starting from within region",
+			"30 1 * * * 2019",
+			time.Date(2019, time.November, 3, 0, 40, 0, 0, loc).Add(1 * time.Hour),
+			[]time.Time{
+				time.Date(2019, time.November, 3, 0, 30, 0, 0, loc).Add(2 * time.Hour),
+				time.Date(2019, time.November, 4, 1, 30, 0, 0, loc),
+				time.Date(2019, time.November, 5, 1, 30, 0, 0, loc),
+				time.Date(2019, time.November, 6, 1, 30, 0, 0, loc),
+			},
+		},
+		{
+			"Fall back: in repeated region, starting from within region 2",
+			"30 1 * * * 2019",
+			time.Date(2019, time.November, 3, 0, 40, 0, 0, loc).Add(2 * time.Hour),
+			[]time.Time{
+				time.Date(2019, time.November, 4, 1, 30, 0, 0, loc),
+				time.Date(2019, time.November, 5, 1, 30, 0, 0, loc),
+				time.Date(2019, time.November, 6, 1, 30, 0, 0, loc),
+			},
+		},
+		{
+			"Fall back: wildcard",
+			"30 * * * * 2019",
+			time.Date(2019, time.November, 3, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.November, 3, 0, 30, 0, 0, loc),
+				time.Date(2019, time.November, 3, 0, 30, 0, 0, loc).Add(1 * time.Hour),
+				time.Date(2019, time.November, 3, 0, 30, 0, 0, loc).Add(2 * time.Hour),
+				time.Date(2019, time.November, 3, 2, 30, 0, 0, loc),
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			expr := MustParse(c.pattern)
+
+			starting := c.initTime
+			for _, next := range c.expected {
+				n := expr.Next(starting)
+				if next != n {
+					t.Fatalf("next(%v) = %v not %v", starting, next, n)
+				}
+
+				starting = next
+			}
+		})
+	}
+}
+
+func TestPeriodicConfig_DSTChange_Transitions_LordHowe(t *testing.T) {
+	locName := "Australia/Lord_Howe"
+	loc, err := time.LoadLocation(locName)
+	require.NoError(t, err)
+
+	cases := []struct {
+		name     string
+		pattern  string
+		initTime time.Time
+		expected []time.Time
+	}{
+		{
+			"normal time",
+			"0 2 * * * 2019",
+			time.Date(2019, time.February, 7, 1, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.February, 7, 2, 0, 0, 0, loc),
+				time.Date(2019, time.February, 8, 2, 0, 0, 0, loc),
+				time.Date(2019, time.February, 9, 2, 0, 0, 0, loc),
+			},
+		},
+		{
+			"backward: non repeated portion of the hour",
+			"3 1 * * * 2019",
+			time.Date(2019, time.April, 6, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.April, 6, 1, 3, 0, 0, loc),
+				time.Date(2019, time.April, 7, 1, 3, 0, 0, loc),
+				time.Date(2019, time.April, 8, 1, 3, 0, 0, loc),
+				time.Date(2019, time.April, 9, 1, 3, 0, 0, loc),
+			},
+		},
+		{
+			"backward: repeated portion of the hour",
+			"31 1 * * * 2019",
+			time.Date(2019, time.April, 6, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.April, 6, 1, 31, 0, 0, loc),
+				time.Date(2019, time.April, 7, 0, 31, 0, 0, loc).Add(60 * time.Minute),
+				time.Date(2019, time.April, 7, 0, 31, 0, 0, loc).Add(90 * time.Minute),
+				time.Date(2019, time.April, 8, 1, 31, 0, 0, loc),
+				time.Date(2019, time.April, 9, 1, 31, 0, 0, loc),
+			},
+		},
+		{
+			"forward: skipped portion of the hour",
+			"3 2 * * * 2019",
+			time.Date(2019, time.October, 5, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.October, 5, 2, 3, 0, 0, loc),
+				// no Oct 6
+				time.Date(2019, time.October, 7, 2, 3, 0, 0, loc),
+				time.Date(2019, time.October, 8, 2, 3, 0, 0, loc),
+				time.Date(2019, time.October, 9, 2, 3, 0, 0, loc),
+			},
+		},
+		{
+			"forward: non-skipped portion of the hour",
+			"31 2 * * * 2019",
+			time.Date(2019, time.October, 5, 0, 0, 0, 0, loc),
+			[]time.Time{
+				time.Date(2019, time.October, 5, 2, 31, 0, 0, loc),
+				// no Oct 6
+				time.Date(2019, time.October, 7, 2, 31, 0, 0, loc),
+				time.Date(2019, time.October, 8, 2, 31, 0, 0, loc),
+				time.Date(2019, time.October, 9, 2, 31, 0, 0, loc),
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			expr := MustParse(c.pattern)
+
+			starting := c.initTime
+			for _, next := range c.expected {
+				n := expr.Next(starting)
+				if next != n {
+					t.Fatalf("next(%v) = %v not %v", starting, next, n)
+				}
+
+				starting = next
+			}
+		})
+	}
+}
+
+func TestNext_DaylightSaving_Property(t *testing.T) {
+	locName := "America/Los_Angeles"
+	loc, err := time.LoadLocation(locName)
+	if err != nil {
+		t.Fatalf("failed to get location: %v", err)
+	}
+
+	cronExprs := []string{
+		"* * * * *",
+		"0 2 * * *",
+		"* 1 * * *",
+	}
+
+	times := []time.Time{
+		// spring forward
+		time.Date(2019, time.March, 11, 0, 0, 0, 0, loc),
+		time.Date(2019, time.March, 10, 0, 0, 0, 0, loc),
+		time.Date(2019, time.March, 11, 0, 0, 0, 0, loc),
+
+		// leap backwards
+		time.Date(2019, time.November, 4, 0, 0, 0, 0, loc),
+		time.Date(2019, time.November, 5, 0, 0, 0, 0, loc),
+		time.Date(2019, time.November, 6, 0, 0, 0, 0, loc),
+	}
+
+	testSpan := 4 * time.Hour
+
+	testCase := func(t *testing.T, cronExpr string, init time.Time) {
+		cron := MustParse(cronExpr)
+
+		prevNext := init
+		for start := init; start.Before(init.Add(testSpan)); start = start.Add(1 * time.Minute) {
+			next := cron.Next(start)
+			if !next.After(start) {
+				t.Fatalf("next(%v) = %v is not after start time", start, next)
+			}
+
+			if next.Before(prevNext) {
+				t.Fatalf("next(%v) = %v reverted back in time from %v", start, next, prevNext)
+			}
+
+			if strings.HasPrefix(cronExpr, "* * ") {
+				if next.Sub(start) != time.Minute {
+					t.Fatalf("next(%v) = %v should be the next minute", start, next)
+				}
+			}
+
+			prevNext = next
+		}
+	}
+
+	for _, cron := range cronExprs {
+		for _, startTime := range times {
+			t.Run(fmt.Sprintf("%v: %v", cron, startTime), func(t *testing.T) {
+				testCase(t, cron, startTime)
+			})
+		}
+	}
+}
+
+func TestNext_DaylightSaving_Property_LordHowe(t *testing.T) {
+	// Lord Howe, Australia is at GMT+1100 April-October and GMT+1030 otherwise.
+	//
+	// On April 7, 2019, at when clock approches 2am, the clock
+	// transitions to 1.30am.
+	//
+	// On October 6, when the clock approaches 2am, the clock transitions
+	// to 2.30am.
+	locName := "Australia/Lord_Howe"
+	loc, err := time.LoadLocation(locName)
+	if err != nil {
+		t.Fatalf("failed to get location: %v", err)
+	}
+
+	cronExprs := []string{
+		"* * * * *",
+		"0 2 * * *",
+		"* 1 * * *",
+		"35 1 * * *",
+		"5 2 * * *",
+	}
+
+	times := []time.Time{
+		// spring forward
+		time.Date(2019, time.April, 6, 0, 0, 0, 0, loc),
+		time.Date(2019, time.April, 7, 0, 0, 0, 0, loc),
+		time.Date(2019, time.April, 8, 0, 0, 0, 0, loc),
+
+		// leap backwards
+		time.Date(2019, time.October, 5, 0, 0, 0, 0, loc),
+		time.Date(2019, time.October, 6, 0, 0, 0, 0, loc),
+		time.Date(2019, time.October, 7, 0, 0, 0, 0, loc),
+	}
+
+	testSpan := 4 * time.Hour
+
+	testCase := func(t *testing.T, cronExpr string, init time.Time) {
+		cron := MustParse(cronExpr)
+
+		prevNext := init
+		for start := init; start.Before(init.Add(testSpan)); start = start.Add(1 * time.Minute) {
+			next := cron.Next(start)
+			if !next.After(start) {
+				t.Fatalf("next(%v) = %v is not after start time", start, next)
+			}
+
+			if next.Before(prevNext) {
+				t.Fatalf("next(%v) = %v reverted back in time from %v", start, next, prevNext)
+			}
+
+			if strings.HasPrefix(cronExpr, "* * ") {
+				if next.Sub(start) != time.Minute {
+					t.Fatalf("next(%v) = %v should be the next minute", start, next)
+				}
+			}
+
+			prevNext = next
+		}
+	}
+
+	for _, cron := range cronExprs {
+		for _, startTime := range times {
+			t.Run(fmt.Sprintf("%v: %v", cron, startTime), func(t *testing.T) {
+				testCase(t, cron, startTime)
+			})
+		}
+	}
+}
+
+func TestNext_DaylightSaving_Property_Brazil(t *testing.T) {
+	// Until 2018, Brazil/Sao Paulo and some South American countries used
+	// to transition for daylight savings at midnight.
+	//
+	// When the clock approaches 2018-11-04 midnight, the clock transitions to 1am.
+	locName := "America/Sao_Paulo"
+	loc, err := time.LoadLocation(locName)
+	if err != nil {
+		t.Fatalf("failed to get location: %v", err)
+	}
+
+	cronExprs := []string{
+		"* * * * *",
+		"0 2 * * *",
+		"* 1 * * *",
+		"5 1 * * *",
+		"5 23 * * *",
+	}
+
+	times := []time.Time{
+		// spring forward
+		time.Date(2018, time.February, 16, 22, 0, 0, 0, loc),
+		time.Date(2018, time.February, 17, 22, 0, 0, 0, loc),
+		time.Date(2018, time.February, 18, 22, 0, 0, 0, loc),
+
+		// leap backwards
+		time.Date(2018, time.November, 3, 23, 0, 0, 0, loc),
+		time.Date(2018, time.November, 3, 23, 0, 0, 0, loc),
+		time.Date(2018, time.November, 3, 23, 0, 0, 0, loc),
+	}
+
+	testSpan := 4 * time.Hour
+
+	testCase := func(t *testing.T, cronExpr string, init time.Time) {
+		cron := MustParse(cronExpr)
+
+		prevNext := init
+		for start := init; start.Before(init.Add(testSpan)); start = start.Add(1 * time.Minute) {
+			next := cron.Next(start)
+			if !next.After(start) {
+				t.Fatalf("next(%v) = %v is not after start time", start, next)
+			}
+
+			if next.Before(prevNext) {
+				t.Fatalf("next(%v) = %v reverted back in time from %v", start, next, prevNext)
+			}
+
+			if strings.HasPrefix(cronExpr, "* * ") {
+				if next.Sub(start) != time.Minute {
+					t.Fatalf("next(%v) = %v should be the next minute", start, next)
+				}
+			}
+
+			prevNext = next
+		}
+	}
+
+	for _, cron := range cronExprs {
+		for _, startTime := range times {
+			t.Run(fmt.Sprintf("%v: %v", cron, startTime), func(t *testing.T) {
+				testCase(t, cron, startTime)
+			})
 		}
 	}
 }
