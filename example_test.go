@@ -33,3 +33,33 @@ func ExampleMustParse() {
 		// Sun, 29 Feb 2032 00:00:00 UTC
 	}
 }
+
+func ExampleMustParseSystemd() {
+	t := time.Date(2013, time.August, 31, 0, 0, 0, 0, time.UTC)
+	nextTimes := MustParseSystemd("Sat,Sun *-12-05 08:05:40").NextN(t, 5)
+	for i := range nextTimes {
+		fmt.Println(nextTimes[i].Format(time.RFC1123))
+		// Output:
+		// Sun, 01 Dec 2013 08:05:40 UTC
+		// Thu, 05 Dec 2013 08:05:40 UTC
+		// Sat, 07 Dec 2013 08:05:40 UTC
+		// Sun, 08 Dec 2013 08:05:40 UTC
+		// Sat, 14 Dec 2013 08:05:40 UTC
+
+	}
+}
+
+func ExampleMustParseSystemd2() {
+	t := time.Date(2013, time.August, 31, 0, 0, 0, 0, time.UTC)
+	nextTimes := MustParseSystemd("Sat,Sun *-*-* */10:05:40").NextN(t, 5)
+	for i := range nextTimes {
+		fmt.Println(nextTimes[i].Format(time.RFC1123))
+		// Output:
+		// Sat, 31 Aug 2013 00:05:40 UTC
+		// Sat, 31 Aug 2013 10:05:40 UTC
+		// Sat, 31 Aug 2013 20:05:40 UTC
+		// Sun, 01 Sep 2013 00:05:40 UTC
+		// Sun, 01 Sep 2013 10:05:40 UTC
+
+	}
+}

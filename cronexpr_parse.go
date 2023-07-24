@@ -183,21 +183,25 @@ var (
 /******************************************************************************/
 
 var (
-	layoutWildcard            = `^\*$|^\?$`
-	layoutValue               = `^(%value%)$`
-	layoutRange               = `^(%value%)-(%value%)$`
-	layoutWildcardAndInterval = `^\*/(\d+)$`
-	layoutValueAndInterval    = `^(%value%)/(\d+)$`
-	layoutRangeAndInterval    = `^(%value%)-(%value%)/(\d+)$`
-	layoutLastDom             = `^l$`
-	layoutWorkdom             = `^(%value%)w$`
-	layoutLastWorkdom         = `^lw$`
-	layoutDowOfLastWeek       = `^(%value%)l$`
-	layoutDowOfSpecificWeek   = `^(%value%)#([1-5])$`
-	fieldFinder               = regexp.MustCompile(`\S+`)
-	entryFinder               = regexp.MustCompile(`[^,]+`)
-	layoutRegexp              = make(map[string]*regexp.Regexp)
-	layoutRegexpLock          sync.Mutex
+	layoutWildcard                = `^\*$|^\?$`
+	layoutValue                   = `^(%value%)$`
+	layoutRange                   = `^(%value%)-(%value%)$`
+	layoutRangeSystemd            = `^(%value%)\.\.(%value%)$`
+	layoutWildcardAndInterval     = `^\*/(\d+)$`
+	layoutValueAndInterval        = `^(%value%)/(\d)+$`
+	layoutRangeAndInterval        = `^(%value%)-(%value%)/(\d+)$`
+	layoutRangeAndIntervalSystemd = `^(%value%)\.\.(%value%)/(\d+)$`
+	layoutLastDom                 = `^l$`
+	layoutWorkdom                 = `^(%value%)w$`
+	layoutLastWorkdom             = `^lw$`
+	layoutDowOfLastWeek           = `^(%value%)l$`
+	layoutDowOfSpecificWeek       = `^(%value%)#([1-5])$`
+	fieldFinder                   = regexp.MustCompile(`\S+`)
+	entryFinder                   = regexp.MustCompile(`[^,]+`)
+	entryDateFinder               = regexp.MustCompile(`[^-]+`)
+	entryTimeFinder               = regexp.MustCompile(`[^:]+`)
+	layoutRegexp                  = make(map[string]*regexp.Regexp)
+	layoutRegexpLock              sync.Mutex
 )
 
 /******************************************************************************/
@@ -209,6 +213,55 @@ var cronNormalizer = strings.NewReplacer(
 	"@weekly", "0 0 0 * * 0 *",
 	"@daily", "0 0 0 * * * *",
 	"@hourly", "0 0 * * * * *")
+
+var systemdNormalizer = strings.NewReplacer(
+	"minutely", "*-*-* *:*:00",
+	"hourly", "*-*-* *:00:00",
+	"daily", "*-*-* 00:00:00",
+	"monthly", "*-*-01 00:00:00",
+	"weekly", "Mon *-*-* 00:00:00",
+	"yearly", "*-01-01 00:00:00",
+	"annually", "*-01-01 00:00:00",
+	"quarterly", "*-01,04,07,10-01 00:00:00",
+	"semiannually", "*-01,07-01 00:00:00",
+)
+
+type FieldType uint8
+
+const (
+	WeekDayField FieldType = 0
+	DayField     FieldType = 1
+	TimeField    FieldType = 2
+)
+
+var systemdFieldsSig = map[FieldType]string{
+	WeekDayField: `(mon|tue|wed|thu|fri|sat|sun){1,3}`,
+	DayField:     `([\d,\*\./]{0,4}-)+([\d,\*\./]{0,2}){0,2}`,
+	TimeField:    `([\d\*\.,/]+:){1,2}[\d\*\.,/]+`,
+}
+
+/******************************************************************************/
+
+func (expr *Expression) normalyzeSystemd() error {
+	// Maybe one of the built-in aliases is being used
+	expr.expression = systemdNormalizer.Replace(expr.expression)
+	expr.expression = strings.ToLower(expr.expression)
+	return nil
+}
+
+/******************************************************************************/
+
+func (expr *Expression) validateField(field int, sigType FieldType) bool {
+	fieldCount := len(expr.indices)
+	if field >= fieldCount {
+		return false
+	}
+	weekdayFieldRx := regexp.MustCompile(systemdFieldsSig[sigType])
+	if weekdayFieldRx.MatchString(expr.expression[expr.indices[field][0]:expr.indices[field][1]]) {
+		return true
+	}
+	return false
+}
 
 /******************************************************************************/
 
@@ -447,6 +500,16 @@ func genericFieldParse(s string, desc fieldDescriptor) ([]*cronDirective, error)
 			directives = append(directives, &directive)
 			continue
 		}
+		// `5..20`
+		pairs = makeLayoutRegexp(layoutRangeSystemd, desc.valuePattern).FindStringSubmatchIndex(snormal)
+		if len(pairs) > 0 {
+			directive.kind = span
+			directive.first = desc.atoi(snormal[pairs[2]:pairs[3]])
+			directive.last = desc.atoi(snormal[pairs[4]:pairs[5]])
+			directive.step = 1
+			directives = append(directives, &directive)
+			continue
+		}
 		// `*/2`
 		pairs = makeLayoutRegexp(layoutWildcardAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
@@ -475,6 +538,19 @@ func genericFieldParse(s string, desc fieldDescriptor) ([]*cronDirective, error)
 		}
 		// `5-20/2`
 		pairs = makeLayoutRegexp(layoutRangeAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal)
+		if len(pairs) > 0 {
+			directive.kind = span
+			directive.first = desc.atoi(snormal[pairs[2]:pairs[3]])
+			directive.last = desc.atoi(snormal[pairs[4]:pairs[5]])
+			directive.step = atoi(snormal[pairs[6]:pairs[7]])
+			if directive.step < 1 || directive.step > desc.max {
+				return nil, fmt.Errorf("invalid interval %s", snormal)
+			}
+			directives = append(directives, &directive)
+			continue
+		}
+		// `5..20/2`
+		pairs = makeLayoutRegexp(layoutRangeAndIntervalSystemd, desc.valuePattern).FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
 			directive.kind = span
 			directive.first = desc.atoi(snormal[pairs[2]:pairs[3]])

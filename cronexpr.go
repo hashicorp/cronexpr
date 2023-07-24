@@ -29,6 +29,7 @@ import (
 // <https://github.com/gorhill/cronexpr#implementation>
 type Expression struct {
 	expression             string
+	indices                [][]int
 	secondList             []int
 	minuteList             []int
 	hourList               []int
@@ -44,6 +45,7 @@ type Expression struct {
 	lastWeekDaysOfWeek     map[int]bool
 	daysOfWeekRestricted   bool
 	yearList               []int
+	timeZone               *time.Location
 }
 
 /******************************************************************************/
@@ -55,6 +57,14 @@ type Expression struct {
 // view.
 func MustParse(cronLine string) *Expression {
 	expr, err := Parse(cronLine)
+	if err != nil {
+		panic(err)
+	}
+	return expr
+}
+
+func MustParseSystemd(cronLine string) *Expression {
+	expr, err := ParseSystemd(cronLine)
 	if err != nil {
 		panic(err)
 	}
@@ -146,6 +156,125 @@ func Parse(cronLine string) (*Expression, error) {
 	return &expr, nil
 }
 
+func ParseSystemd(systemdLine string) (*Expression, error) {
+	var expr = Expression{
+		expression: systemdLine,
+	}
+	if err := expr.normalyzeSystemd(); err != nil {
+		return nil, fmt.Errorf("invalid expression, %s", err)
+	}
+
+	expr.indices = fieldFinder.FindAllStringIndex(expr.expression, -1)
+	fieldCount := len(expr.indices)
+	fieldI := 0
+	var err error
+
+	if fieldCount > 4 {
+		return nil, fmt.Errorf("too much field(s)")
+	}
+
+	// Try parse weekday field
+	if expr.validateField(fieldI, WeekDayField) {
+		// parse weekday
+		err = expr.dowFieldHandler(expr.expression[expr.indices[fieldI][0]:expr.indices[fieldI][1]])
+		if err != nil {
+			return nil, err
+		}
+		fieldI++
+	} else {
+		// weekdays *
+		err = expr.dowFieldHandler("*")
+	}
+
+	// Try parse date field
+	if expr.validateField(fieldI, DayField) {
+		// parse date
+		field := 1
+		dateString := expr.expression[expr.indices[fieldI][0]:expr.indices[fieldI][1]]
+		indices := entryDateFinder.FindAllStringIndex(dateString, -1)
+
+		// day of month field
+		err = expr.domFieldHandler(dateString[indices[len(indices)-field][0]:indices[len(indices)-field][1]])
+		if err != nil {
+			return nil, err
+		}
+		field += 1
+
+		// month field
+		if len(indices)-field > 0 {
+			err = expr.monthFieldHandler(dateString[indices[len(indices)-field][0]:indices[len(indices)-field][1]])
+			if err != nil {
+				return nil, err
+			}
+			field += 1
+		} else {
+			expr.monthList = monthDescriptor.defaultList
+		}
+
+		// year field
+		if len(indices)-field > 0 {
+			err = expr.yearFieldHandler(dateString[indices[len(indices)-field][0]:indices[len(indices)-field][1]])
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			expr.yearList = yearDescriptor.defaultList
+		}
+		fieldI++
+	} else {
+		_ = expr.domFieldHandler("*")
+		_ = expr.monthFieldHandler("*")
+		_ = expr.yearFieldHandler("*")
+	}
+
+	// Try parse date time
+	if expr.validateField(fieldI, TimeField) {
+		// parse time
+		field := 0
+		timeString := expr.expression[expr.indices[fieldI][0]:expr.indices[fieldI][1]]
+		indices := entryTimeFinder.FindAllStringIndex(timeString, -1)
+
+		// hour field
+		err = expr.hourFieldHandler(timeString[indices[field][0]:indices[field][1]])
+		if err != nil {
+			return nil, err
+		}
+		field += 1
+
+		// minute field
+		err = expr.minuteFieldHandler(timeString[indices[field][0]:indices[field][1]])
+		if err != nil {
+			return nil, err
+		}
+		field += 1
+
+		// seconds field
+		if field < len(indices) {
+			err = expr.secondFieldHandler(timeString[indices[field][0]:indices[field][1]])
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			expr.secondList = secondDescriptor.defaultList
+		}
+
+		fieldI++
+	} else {
+		// time *
+		_ = expr.secondFieldHandler("*")
+		_ = expr.minuteFieldHandler("*")
+		_ = expr.hourFieldHandler("*")
+	}
+
+	if fieldI < fieldCount {
+		if expr.expression[expr.indices[fieldI][0]:expr.indices[fieldI][1]] != "" {
+			// try parse timezone
+			expr.timeZone = time.FixedZone(expr.expression[expr.indices[fieldI][0]:expr.indices[fieldI][1]], 0)
+		}
+	}
+	return &expr, nil
+}
+
 /******************************************************************************/
 
 // Next returns the closest time instant immediately following `fromTime` which
@@ -161,8 +290,10 @@ func (expr *Expression) Next(fromTime time.Time) time.Time {
 	if fromTime.IsZero() {
 		return fromTime
 	}
-
 	loc := fromTime.Location()
+	if expr.timeZone != nil {
+		loc = expr.timeZone
+	}
 	t := fromTime.Add(time.Second - time.Duration(fromTime.Nanosecond())*time.Nanosecond)
 
 WRAP:
