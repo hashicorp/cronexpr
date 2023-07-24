@@ -223,8 +223,8 @@ func ParseSystemd(systemdLine string) (*Expression, error) {
 		fieldI++
 	} else {
 		_ = expr.domFieldHandler("*")
-		_ = expr.monthFieldHandler("*")
-		_ = expr.yearFieldHandler("*")
+		expr.monthList = monthDescriptor.defaultList
+		expr.yearList = yearDefaultList
 	}
 
 	// Try parse date time
@@ -261,9 +261,9 @@ func ParseSystemd(systemdLine string) (*Expression, error) {
 		fieldI++
 	} else {
 		// time *
-		_ = expr.secondFieldHandler("*")
-		_ = expr.minuteFieldHandler("*")
-		_ = expr.hourFieldHandler("*")
+		expr.secondList = secondDescriptor.defaultList
+		expr.minuteList = minuteDescriptor.defaultList
+		expr.hourList = hourDescriptor.defaultList
 	}
 
 	if fieldI < fieldCount {
