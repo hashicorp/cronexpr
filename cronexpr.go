@@ -36,6 +36,7 @@ type Expression struct {
 	workdaysOfMonth        map[int]bool
 	lastDayOfMonth         bool
 	lastWorkdayOfMonth     bool
+	lastNthDayOfMonth      int
 	daysOfMonthRestricted  bool
 	actualDaysOfMonthList  []int
 	monthList              []int
@@ -140,7 +141,7 @@ func Parse(cronLine string) (*Expression, error) {
 			return nil, err
 		}
 	} else {
-		expr.yearList = yearDescriptor.defaultList
+		expr.yearList = nil
 	}
 
 	return &expr, nil
@@ -156,6 +157,13 @@ func Parse(cronLine string) (*Expression, error) {
 //
 // The zero value of time.Time is returned if no matching time instant exists
 // or if a `fromTime` is itself a zero value.
+
+func (expr *Expression) generateYearList(currentYear int) {
+	yearList := make([]int, 0)
+	yearList = append(yearList, currentYear, currentYear+1)
+	expr.yearList = yearList
+}
+
 func (expr *Expression) Next(fromTime time.Time) time.Time {
 	// Special case
 	if fromTime.IsZero() {
@@ -167,8 +175,8 @@ func (expr *Expression) Next(fromTime time.Time) time.Time {
 
 WRAP:
 
-	// let's find the next date that satisfies condition
 	v := t.Year()
+	expr.generateYearList(v)
 	if i := sort.SearchInts(expr.yearList, v); i == len(expr.yearList) {
 		return time.Time{}
 	} else if v != expr.yearList[i] {
@@ -176,6 +184,7 @@ WRAP:
 	}
 
 	v = int(t.Month())
+
 	if i := sort.SearchInts(expr.monthList, v); i == len(expr.monthList) {
 		// try again with a new year
 		t = time.Date(t.Year()+1, time.Month(expr.monthList[0]), 1, 0, 0, 0, 0, loc)
@@ -190,15 +199,16 @@ WRAP:
 		goto WRAP
 	}
 
+	// Calculate actual days of the month based on the expression
+	actualDaysOfMonthList := expr.calculateActualDaysOfMonth(t.Year(), int(t.Month()))
+
 	v = t.Day()
-	if i := sort.SearchInts(expr.actualDaysOfMonthList, v); i == len(expr.actualDaysOfMonthList) {
+	if i := sort.SearchInts(actualDaysOfMonthList, v); i == len(actualDaysOfMonthList) {
 		t = time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, loc)
 		goto WRAP
-	} else if v != expr.actualDaysOfMonthList[i] {
-		t = time.Date(t.Year(), t.Month(), expr.actualDaysOfMonthList[i], 0, 0, 0, 0, loc)
-
-		// in San Palo, before 2019, there may be no midnight (or multiple midnights)
-		// due to DST
+	} else if v != actualDaysOfMonthList[i] {
+		t = time.Date(t.Year(), t.Month(), actualDaysOfMonthList[i], 0, 0, 0, 0, loc)
+		// Handle special case for midnight
 		if t.Hour() != 0 {
 			if t.Hour() > 12 {
 				t = t.Add(time.Duration(24-t.Hour()) * time.Hour)
@@ -207,7 +217,6 @@ WRAP:
 			}
 		}
 	}
-
 	if timeZoneInDay(t) {
 		goto SLOW_CLOCK
 	}
