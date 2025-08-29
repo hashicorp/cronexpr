@@ -122,7 +122,7 @@ returned.
 
 API
 ---
-<http://godoc.org/github.com/gorhill/cronexpr>
+<https://pkg.go.dev/github.com/hashicorp/cronexpr>
 
 License
 -------
