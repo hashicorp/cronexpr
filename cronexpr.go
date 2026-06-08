@@ -28,7 +28,7 @@ import (
 // A Expression represents a specific cron time expression as defined at
 // <https://github.com/gorhill/cronexpr#implementation>
 type Expression struct {
-	expression             string
+	expression             string //nolint:unused
 	secondList             []int
 	minuteList             []int
 	hourList               []int
@@ -296,10 +296,7 @@ func (expr *Expression) NextN(fromTime time.Time, n uint) []time.Time {
 	nextTimes := make([]time.Time, 0, n)
 	if n > 0 {
 		fromTime = expr.Next(fromTime)
-		for {
-			if fromTime.IsZero() {
-				break
-			}
+		for !fromTime.IsZero() {
 			nextTimes = append(nextTimes, fromTime)
 			n -= 1
 			if n == 0 {
