@@ -499,7 +499,7 @@ func makeLayoutRegexp(layout, value string) *regexp.Regexp {
 	layoutRegexpLock.Lock()
 	defer layoutRegexpLock.Unlock()
 
-	layout = strings.Replace(layout, `%value%`, value, -1)
+	layout = strings.ReplaceAll(layout, `%value%`, value)
 	re := layoutRegexp[layout]
 	if re == nil {
 		re = regexp.MustCompile(layout)
