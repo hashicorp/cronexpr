@@ -161,6 +161,7 @@ var crontests = []crontest{
 		"Mon 2006-01-02 15:04",
 		[]crontimes{
 			{"2013-09-02 00:00:00", "Sat 2013-11-30 00:00"},
+			{"2013-09-02 00:00:00", "Sat 2013-11-30 00:00"},
 		},
 	},
 
@@ -220,6 +221,16 @@ var crontests = []crontest{
 		},
 	},
 
+	{
+		"* * 16 L-3 2/3 ? *",
+		"Mon 2006-01-02 15:04",
+		[]crontimes{
+			{"2024-05-15 00:00:00", "Tue 2024-05-28 16:00"},
+			{"2024-05-30 00:00:00", "Wed 2024-08-28 16:00"},
+			{"2024-08-30 00:00:00", "Wed 2024-11-27 16:00"},
+		},
+	},
+
 	// TODO: more tests
 }
 
@@ -245,8 +256,8 @@ func TestExpressions(t *testing.T) {
 func TestZero(t *testing.T) {
 	from, _ := time.Parse("2006-01-02", "2013-08-31")
 	next := MustParse("* * * * * 1980").Next(from)
-	if next.IsZero() == false {
-		t.Error(`("* * * * * 1980").Next("2013-08-31").IsZero() returned 'false', expected 'true'`)
+	if next.IsZero() == true {
+		t.Error(`("* * * * * 1980").Next("2013-08-31").IsZero() returned 'true', expected 'false'`)
 	}
 
 	next = MustParse("* * * * * 2050").Next(from)
