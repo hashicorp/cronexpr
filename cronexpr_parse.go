@@ -321,11 +321,22 @@ func (expr *Expression) dowFieldHandler(s string) error {
 		case one:
 			populateOne(expr.daysOfWeek, directive.first)
 		case span:
-			// To properly handle spans that end in 7 (Sunday)
-			if directive.last == 0 {
-				directive.last = 6
+			// 7 is Sunday, and it is also the high end of this field. The
+			// old rewrite stored that end as 0 and then walked only as far
+			// as Saturday, so 5-7 and fri-sun dropped Sunday. The same
+			// rewrite turned a Sunday-to-Sunday span such as 0-0 into
+			// every day. List the numeric span before folding 7 back to 0.
+			if days, ok := expandDowSpan(s[directive.sbeg:directive.send], directive.step); ok {
+				for v := range days {
+					populateOne(expr.daysOfWeek, v)
+				}
+			} else {
+				// Inverted ranges such as 7-1 keep the previous expansion.
+				if directive.last == 0 {
+					directive.last = 6
+				}
+				populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
 			}
-			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
 		case all:
 			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
 			expr.daysOfWeekRestricted = false
@@ -384,6 +395,62 @@ func (expr *Expression) domFieldHandler(s string) error {
 
 func populateOne(values map[int]bool, v int) {
 	values[v] = true
+}
+
+// dowRangeNumber keeps a literal 7 so a span can include the days before
+// Sunday. Every other token uses the normal day-of-week table, where
+// Sunday is already 0.
+func dowRangeNumber(token string) int {
+	switch token {
+	case "7", "07":
+		return 7
+	default:
+		return dowDescriptor.atoi(token)
+	}
+}
+
+func isSundayName(token string) bool {
+	switch token {
+	case "sun", "sunday":
+		return true
+	default:
+		return false
+	}
+}
+
+// expandDowSpan lists the days in a day-of-week span. Sunday written as
+// 7 stays 7 until the list is built, then becomes 0. A name range such
+// as fri-sun runs through Sunday rather than stopping on Saturday.
+// ok is false for an inverted range, which the caller expands as before.
+func expandDowSpan(raw string, step int) (map[int]bool, bool) {
+	if step < 1 {
+		return nil, false
+	}
+	body := strings.ToLower(raw)
+	if i := strings.IndexByte(body, '/'); i >= 0 {
+		body = body[:i]
+	}
+	parts := strings.SplitN(body, "-", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, false
+	}
+	startN := dowRangeNumber(parts[0])
+	endN := dowRangeNumber(parts[1])
+	if isSundayName(parts[1]) && startN > 0 && startN <= 6 {
+		endN = 7
+	}
+	if startN > endN {
+		return nil, false
+	}
+	values := make(map[int]bool)
+	for i := startN; i <= endN; i += step {
+		v := i
+		if v == 7 {
+			v = 0
+		}
+		values[v] = true
+	}
+	return values, true
 }
 
 func populateMany(values map[int]bool, min, max, step int) {
