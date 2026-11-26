@@ -92,14 +92,14 @@ var (
 		`12`: 12, `dec`: 12, `december`: 12,
 	}
 	dowTokens = map[string]int{
-		`0`: 0, `sun`: 0, `sunday`: 0,
-		`1`: 1, `mon`: 1, `monday`: 1,
-		`2`: 2, `tue`: 2, `tuesday`: 2,
-		`3`: 3, `wed`: 3, `wednesday`: 3,
-		`4`: 4, `thu`: 4, `thursday`: 4,
-		`5`: 5, `fri`: 5, `friday`: 5,
-		`6`: 6, `sat`: 6, `saturday`: 6,
-		`7`: 0,
+		`0`: 0, `00`: 0, `sun`: 0, `sunday`: 0,
+		`1`: 1, `01`: 1, `mon`: 1, `monday`: 1,
+		`2`: 2, `02`: 2, `tue`: 2, `tuesday`: 2,
+		`3`: 3, `03`: 3, `wed`: 3, `wednesday`: 3,
+		`4`: 4, `04`: 4, `thu`: 4, `thursday`: 4,
+		`5`: 5, `05`: 5, `fri`: 5, `friday`: 5,
+		`6`: 6, `06`: 6, `sat`: 6, `saturday`: 6,
+		`7`: 7, `07`: 7,
 	}
 )
 
@@ -308,7 +308,7 @@ func (expr *Expression) dowFieldHandler(s string) error {
 			// `5L`
 			pairs := makeLayoutRegexp(layoutDowOfLastWeek, dowDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
 			if len(pairs) > 0 {
-				populateOne(expr.lastWeekDaysOfWeek, dowDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
+				populateOne(expr.lastWeekDaysOfWeek, dowDescriptor.atoi(snormal[pairs[2]:pairs[3]])%7)
 			} else {
 				// `5#3`
 				pairs := makeLayoutRegexp(layoutDowOfSpecificWeek, dowDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
@@ -319,13 +319,9 @@ func (expr *Expression) dowFieldHandler(s string) error {
 				}
 			}
 		case one:
-			populateOne(expr.daysOfWeek, directive.first)
+			populateOne(expr.daysOfWeek, directive.first%7)
 		case span:
-			// To properly handle spans that end in 7 (Sunday)
-			if directive.last == 0 {
-				directive.last = 6
-			}
-			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
+			populateDowSpan(expr.daysOfWeek, directive.first, directive.last, directive.step)
 		case all:
 			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
 			expr.daysOfWeekRestricted = false
@@ -389,6 +385,20 @@ func populateOne(values map[int]bool, v int) {
 func populateMany(values map[int]bool, min, max, step int) {
 	for i := min; i <= max; i += step {
 		values[i] = true
+	}
+}
+
+// populateDowSpan adds a day-of-week span, where Sunday is 0 or 7. Sunday
+// ends a span as 7, as in `fri-sun`, and starts one as 0, as in `7-2`.
+func populateDowSpan(values map[int]bool, first, last, step int) {
+	if last == 0 && first > 0 {
+		last = 7
+	}
+	if first == 7 && last < 7 {
+		first = 0
+	}
+	for i := first; i <= last; i += step {
+		values[i%7] = true
 	}
 }
 
