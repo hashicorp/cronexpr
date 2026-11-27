@@ -818,6 +818,82 @@ func TestInterval_Interval60Issue(t *testing.T) {
 	}
 }
 
+// TestDayOfWeek_Sunday checks the weekdays a day-of-week field fires on, with
+// Sunday written as 0, 7 or sun, and values written with a leading zero.
+func TestDayOfWeek_Sunday(t *testing.T) {
+	sun, mon, tue, wed, thu, fri, sat := time.Sunday, time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday, time.Saturday
+	every := []time.Weekday{sun, mon, tue, wed, thu, fri, sat}
+	tests := []struct {
+		field string
+		want  []time.Weekday
+	}{
+		{"0", []time.Weekday{sun}},
+		{"7", []time.Weekday{sun}},
+		{"sun", []time.Weekday{sun}},
+		{"1-5", []time.Weekday{mon, tue, wed, thu, fri}},
+		{"5,6,0", []time.Weekday{sun, fri, sat}},
+		{"*", every},
+		{"*/2", []time.Weekday{sun, tue, thu, sat}},
+		{"0-7", every},
+		{"7/2", []time.Weekday{sun, tue, thu, sat}},
+		{"7-2", []time.Weekday{sun, mon, tue}},
+		{"5-7", []time.Weekday{sun, fri, sat}},
+		{"6-7", []time.Weekday{sun, sat}},
+		{"fri-sun", []time.Weekday{sun, fri, sat}},
+		{"5-0", []time.Weekday{sun, fri, sat}},
+		{"1-7/2", []time.Weekday{sun, mon, wed, fri}},
+		{"5-7/2", []time.Weekday{sun, fri}},
+		{"0-0", []time.Weekday{sun}},
+		{"7-7", []time.Weekday{sun}},
+		{"sun-sun", []time.Weekday{sun}},
+		{"7-0", []time.Weekday{sun}},
+		{"7-sun", []time.Weekday{sun}},
+		{"00", []time.Weekday{sun}},
+		{"01", []time.Weekday{mon}},
+		{"05", []time.Weekday{fri}},
+		{"07", []time.Weekday{sun}},
+		{"6-07", []time.Weekday{sun, sat}},
+		{"01-05", []time.Weekday{mon, tue, wed, thu, fri}},
+	}
+	// Saturday noon; fourteen launches cover every weekday a field names.
+	from := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	for _, tc := range tests {
+		t.Run(tc.field, func(t *testing.T) {
+			expr, err := Parse("0 0 * * " + tc.field)
+			require.NoError(t, err)
+			seen := make(map[time.Weekday]bool)
+			for _, next := range expr.NextN(from, 14) {
+				seen[next.Weekday()] = true
+			}
+			var got []time.Weekday
+			for _, day := range every {
+				if seen[day] {
+					got = append(got, day)
+				}
+			}
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestDayOfWeek_LastOfMonth checks `L` with Sunday as 7 and a leading zero.
+func TestDayOfWeek_LastOfMonth(t *testing.T) {
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	tests := map[string]string{
+		"0L":  "2026-11-29",
+		"7L":  "2026-11-29",
+		"5L":  "2026-11-27",
+		"05L": "2026-11-27",
+	}
+	for field, want := range tests {
+		t.Run(field, func(t *testing.T) {
+			expr, err := Parse("0 0 * * " + field)
+			require.NoError(t, err)
+			require.Equal(t, want, expr.Next(from).Format("2006-01-02"))
+		})
+	}
+}
+
 /******************************************************************************/
 
 var benchmarkExpressions = []string{
